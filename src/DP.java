@@ -1,2 +1,52 @@
 public class DP {
+
+    private String target;
+    private String typo;
+    private int[][] dp;
+
+    public DP(String target, String typo) {
+        this.target = target;
+        this.typo = typo;
+        this.dp = new int[target.length() + 1][typo.length() + 1];
+    }
+
+    public int compute() {
+        int n = target.length();
+        int m = typo.length();
+
+        for (int i = 0; i <= n; i++) {
+            for (int j = 0; j <= m; j++) {
+                dp[i][j] = Integer.MAX_VALUE / 2;
+            }
+        }
+
+        dp[0][0] = 0;
+
+        for (int i = 0; i <= n; i++) {
+            for (int j = 0; j <= m; j++) {
+
+                if (i > 0) {
+                    dp[i][j] = Math.min(dp[i][j], dp[i - 1][j] + 1); // delete
+                }
+
+                if (j > 0) {
+                    dp[i][j] = Math.min(dp[i][j], dp[i][j - 1] + 1); // insert
+                }
+
+                if (i > 0 && j > 0) {
+                    int cost = (target.charAt(i - 1) == typo.charAt(j - 1)) ? 0 : 1;
+                    dp[i][j] = Math.min(dp[i][j], dp[i - 1][j - 1] + cost);
+                }
+
+                if (i > 1 && j > 1 &&
+                        target.charAt(i - 2) == typo.charAt(j - 1) &&
+                        target.charAt(i - 1) == typo.charAt(j - 2)) {
+
+                    dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1);
+                }
+            }
+        }
+
+        return dp[n][m];
+    }
 }
