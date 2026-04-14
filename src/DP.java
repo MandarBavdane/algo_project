@@ -21,7 +21,9 @@ public class DP {
         int n = target.length();
         int m = typo.length();
 
-        for (int i = 0; i <= n; i++) {
+        dp[0][0] = 0;
+        for (int i = 1; i <= n; i++) {
+            dp[i][0] = dp[i - 1][0] + 1;
             for (int j = 0; j <= m; j++) {
                 dp[i][j] = Integer.MAX_VALUE / 2;
             }
@@ -56,4 +58,20 @@ public class DP {
 
         return dp[n][m];
     }
+}
+
+private int getCostIns(char a) {
+    return 1;
+}
+
+private int getCostDel(char a) {
+    return 1;
+}
+
+private int getCostSub(char a, char b) {
+    return (a == b) ? 0 : 1;
+}
+
+private int getCostTrans(char a, char b) {
+    return 1;
 }
