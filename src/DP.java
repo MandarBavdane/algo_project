@@ -23,13 +23,13 @@ public class DP {
 
         dp[0][0] = 0;
         for (int i = 1; i <= n; i++) {
-            dp[i][0] = dp[i - 1][0] + 1;
-            for (int j = 0; j <= m; j++) {
-                dp[i][j] = Integer.MAX_VALUE / 2;
-            }
+            dp[i][0] = dp[i - 1][0] + getCostDel(target.charAt(i - 1));
+            parent[i][0] = DELETE;
         }
-
-        dp[0][0] = 0;
+        for (int j = 0; j <= m; j++) {
+            dp[0][j] = dp[0][j - 1] + getCostIns(target.charAt(j - 1));
+            parent[0][j] = INSERT;
+        }
 
         for (int i = 0; i <= n; i++) {
             for (int j = 0; j <= m; j++) {
