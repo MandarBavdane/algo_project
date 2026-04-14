@@ -33,29 +33,35 @@ public class DP {
 
         for (int i = 0; i <= n; i++) {
             for (int j = 0; j <= m; j++) {
+                dp[i][j] = Integer.MAX_VALUE;
 
-                if (i > 0) {
-                    dp[i][j] = Math.min(dp[i][j], dp[i - 1][j] + 1); // delete
+                int insCost = getCostIns(typo.charAt(j-1));
+                if (dp[i][j-1] + insCost < dp[i][j]) {
+                    dp[i][j] = dp[i][j-1] + insCost;
+                    parent[i][j] = INSERT;
                 }
 
-                if (j > 0) {
-                    dp[i][j] = Math.min(dp[i][j], dp[i][j - 1] + 1); // insert
+                int delCost = getCostDel(target.charAt(i-1));
+                if (dp[i-1][j] + delCost < dp[i][j]) {
+                    dp[i][j] = dp[i-1][j] + delCost;
+                    parent[i][j] = DELETE;
                 }
 
-                if (i > 0 && j > 0) {
-                    int cost = (target.charAt(i - 1) == typo.charAt(j - 1)) ? 0 : 1;
-                    dp[i][j] = Math.min(dp[i][j], dp[i - 1][j - 1] + cost);
+                int subCost = getCostSub(target.charAt(i - 1), target.charAt(j - 1));
+                if (dp[i-1][j-1] + subCost < dp[i][j]) {
+                    dp[i][j] = dp[i-1][j-1] + subCost;
+                    parent[i][j] = SUBSTITUTE;
                 }
 
-                if (i > 1 && j > 1 &&
-                        target.charAt(i - 2) == typo.charAt(j - 1) &&
-                        target.charAt(i - 1) == typo.charAt(j - 2)) {
-
-                    dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1);
+                if (i > 1 && j > 1 && target.charAt(i-2) == typo.charAt(j-1) && target.charAt(i-1) == typo.charAt(j-2)) {
+                    int transCost = getCostTrans(target.charAt(i-2), target.charAt(i-1));
+                    if (dp[i-2][j-2] + transCost < dp[i][j]) {
+                        dp[i][j] = dp[i-2][j-2] + transCost;
+                        parent[i][j] = TRANSPOSE;
+                    }
                 }
             }
         }
-
         return dp[n][m];
     }
 }
