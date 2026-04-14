@@ -3,11 +3,18 @@ public class DP {
     private String target;
     private String typo;
     private int[][] dp;
+    private int[][] parent;
+
+    public static final int DELETE = 1;
+    public static final int INSERT = 2;
+    public static final int SUBSTITUTE = 3;
+    public static final int TRANSPOSE = 4;
 
     public DP(String target, String typo) {
         this.target = target;
         this.typo = typo;
         this.dp = new int[target.length() + 1][typo.length() + 1];
+        this.parent = new int[target.length() + 1][typo.length() + 1];
     }
 
     public int compute() {
