@@ -5,10 +5,19 @@ public class DP {
     private int[][] dp;
     private int[][] parent;
 
+    public int[][] getParentMatrix() {
+        return this.parent;
+    }
+
     public static final int DELETE = 1;
     public static final int INSERT = 2;
     public static final int SUBSTITUTE = 3;
     public static final int TRANSPOSE = 4;
+
+    private int getCostIns(char a) {return 1;}
+    private int getCostDel(char a) {return 1;}
+    private int getCostSub(char a, char b) {return (a == b) ? 0 : 1;}
+    private int getCostTrans(char a, char b) {return 1;}
 
     public DP(String target, String typo) {
         this.target = target;
@@ -26,13 +35,13 @@ public class DP {
             dp[i][0] = dp[i - 1][0] + getCostDel(target.charAt(i - 1));
             parent[i][0] = DELETE;
         }
-        for (int j = 0; j <= m; j++) {
-            dp[0][j] = dp[0][j - 1] + getCostIns(target.charAt(j - 1));
+        for (int j = 1; j <= m; j++) {
+            dp[0][j] = dp[0][j - 1] + getCostIns(typo.charAt(j - 1));
             parent[0][j] = INSERT;
         }
 
-        for (int i = 0; i <= n; i++) {
-            for (int j = 0; j <= m; j++) {
+        for (int i = 1; i <= n; i++) {
+            for (int j = 1; j <= m; j++) {
                 dp[i][j] = Integer.MAX_VALUE;
 
                 int insCost = getCostIns(typo.charAt(j-1));
@@ -47,10 +56,15 @@ public class DP {
                     parent[i][j] = DELETE;
                 }
 
-                int subCost = getCostSub(target.charAt(i - 1), target.charAt(j - 1));
+                int subCost = getCostSub(target.charAt(i - 1), typo.charAt(j - 1));
                 if (dp[i-1][j-1] + subCost < dp[i][j]) {
                     dp[i][j] = dp[i-1][j-1] + subCost;
-                    parent[i][j] = SUBSTITUTE;
+
+                    if (subCost == 0) {
+                        parent[i][j] = MATCH;
+                    } else {
+                        parent[i][j] = SUBSTITUTE;
+                    }
                 }
 
                 if (i > 1 && j > 1 && target.charAt(i-2) == typo.charAt(j-1) && target.charAt(i-1) == typo.charAt(j-2)) {
@@ -66,18 +80,3 @@ public class DP {
     }
 }
 
-private int getCostIns(char a) {
-    return 1;
-}
-
-private int getCostDel(char a) {
-    return 1;
-}
-
-private int getCostSub(char a, char b) {
-    return (a == b) ? 0 : 1;
-}
-
-private int getCostTrans(char a, char b) {
-    return 1;
-}
