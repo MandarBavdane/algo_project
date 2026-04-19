@@ -1,346 +1,328 @@
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <algorithm>
-#include <stdexcept>
+#include <bits/stdc++.h>
 using namespace std;
 
-static const int INF = 1e9;
-
-struct KeyInfo {
-    int row;
-    int col;
-    int hand;   // 0 = left, 1 = right
-    int finger; // finger group: 0=pinky, 1=ring, 2=middle, 3=index
-    bool exists;
-    KeyInfo() : row(-1), col(-1), hand(-1), finger(-1), exists(false) {}
-    KeyInfo(int r, int c, int h, int f) : row(r), col(c), hand(h), finger(f), exists(true) {}
-};
-
-enum ActionType {
-    ACT_NONE = 0,
-    ACT_MATCH,
-    ACT_INSERT,
-    ACT_DELETE,
-    ACT_SUBSTITUTE,
-    ACT_TRANSPOSE
-};
-
-struct Decision {
-    ActionType type;
-    char ch;
-    Decision(ActionType t = ACT_NONE, char c = '\0') : type(t), ch(c) {}
-};
+static const int INF = 1000000000;
 
 class TypoSolver {
 private:
-    string target;
-    string typo;
+    enum Kind {
+        MATCH,
+        INSERT,
+        DELETE_OP,
+        SUBSTITUTE,
+        TRANSPOSE,
+        END
+    };
+
+    struct Choice {
+        Kind kind = END;
+        int advanceI = 0;
+        int advanceJ = 0;
+        int emitTransposeCount = 0; 
+    };
+
+    string target, typo;
     int n, m;
-    unordered_map<char, KeyInfo> keymap;
-    
+    vector<vector<int>> memo;
+    vector<vector<char>> seen;
+    vector<vector<Choice>> choice;
+    unordered_map<char, pair<int,int>> pos;
+
 public:
-    TypoSolver(const string& t, const string& y) : target(t), typo(y) {
-        n = (int)target.size();
-        m = (int)typo.size();
-        initKeyboard();
+    TypoSolver(const string& t, const string& y) : target(t), typo(y), n((int)t.size()), m((int)y.size()) {
+        memo.assign(n + 1, vector<int>(m + 1, INF));
+        seen.assign(n + 1, vector<char>(m + 1, 0));
+        choice.assign(n + 1, vector<Choice>(m + 1));
+        buildKeyboardPositions();
     }
-    
+
     pair<int, vector<string>> solveAll() {
-        int best = solveDamerauLevenshtein();
-        vector<string> ops;
+        int best = solve(0, 0);
+        vector<string> ops = reconstruct();
         return {best, ops};
     }
 
 private:
-    static bool isSpace(char c) {
-        return c == ' ';
-    }
-    
-    bool isKey(char c) const {
-        return !isSpace(c) && keymap.count(c) && keymap.at(c).exists;
-    }
-    
-    int keyboardDistance(char a, char b) const {
-        const KeyInfo& ka = keymap.at(a);
-        const KeyInfo& kb = keymap.at(b);
-        return max(abs(ka.row - kb.row), abs(ka.col - kb.col));
-    }
-    
-    void initKeyboard() {
-        // Row 0: 1234567890
-        string row0 = "1234567890";
-        for (int i = 0; i < (int)row0.size(); i++) {
-            keymap[row0[i]] = KeyInfo(0, i, (i <= 4 ? 0 : 1), (i == 0 || i == 9 ? 0 : i == 1 || i == 8 ? 1 : i == 2 || i == 7 ? 2 : 3));
-        }
-        
-        // Row 1: qwertyuiop
-        string row1 = "qwertyuiop";
-        for (int i = 0; i < (int)row1.size(); i++) {
-            keymap[row1[i]] = KeyInfo(1, i, (i <= 4 ? 0 : 1), (i == 0 || i == 9 ? 0 : i == 1 || i == 8 ? 1 : i == 2 || i == 7 ? 2 : 3));
-        }
-        
-        // Row 2: asdfghjkl;
-        string row2 = "asdfghjkl;";
-        for (int i = 0; i < (int)row2.size(); i++) {
-            keymap[row2[i]] = KeyInfo(2, i, (i <= 4 ? 0 : 1), (i == 0 || i == 9 ? 0 : i == 1 || i == 8 ? 1 : i == 2 || i == 7 ? 2 : 3));
-        }
-        
-        // Row 3: zxcvbnm,.
-        string row3 = "zxcvbnm,.";
-        for (int i = 0; i < (int)row3.size(); i++) {
-            keymap[row3[i]] = KeyInfo(3, i, (i <= 4 ? 0 : 1), (i == 0 || i == 9 ? 0 : i == 1 || i == 8 ? 1 : i == 2 || i == 7 ? 2 : 3));
-        }
-        
-        // Space
-        keymap[' '] = KeyInfo(-1, -1, -1, -1);
-    }
-    
-    char prevOutputChar(int j) const {
-        if (j <= 0) return '\0';
-        return typo[j - 1];
-    }
-    
-    char nextTargetChar(int i) const {
-        if (i >= n) return '\0';
-        return target[i];
-    }
-    
-    char prevTargetChar(int i) const {
-        if (i <= 0) return '\0';
-        return target[i - 1];
-    }
-    
-    // STRICT SPEC COMPLIANT INSERTION COST WITH MINIMUM RESOLUTION
-    int insertionCost(int i, int j) const {
-        vector<int> candidates;
-        
-        char ins = typo[j];
-        char prev = prevOutputChar(j);
-        char next = nextTargetChar(i);
-        
-        // Rule 1: Repeated character: 1
-        if (prev != '\0' && prev == ins) candidates.push_back(1);
-        if (next != '\0' && next == ins) candidates.push_back(1);
-        
-        // Rule 2: Space insertion
-        if (isSpace(ins)) {
-            // Rule 2a: Space after key on bottom row: 2
-            if (prev != '\0' && isKey(prev) && keymap.at(prev).row == 3) {
-                candidates.push_back(2);
-            }
-            // Rule 2b: Space after any key: 2 (validation table)
-            if (prev != '\0' && isKey(prev)) candidates.push_back(2);
-            // Rule 2c: Space after something else: 6
-            if (prev != '\0' && !isKey(prev)) candidates.push_back(6);
-            if (prev == '\0') candidates.push_back(6);
-        } else {
-            // Rule 4: Non-space character before or after a space: 6
-            if (prev == ' ' || next == ' ') candidates.push_back(6);
-            
-            // Rule 5: Before or after another key on same hand: d(k1,k2)
-            if (prev != '\0' && isKey(prev) && isKey(ins) && keymap.at(prev).hand == keymap.at(ins).hand) {
-                candidates.push_back(keyboardDistance(prev, ins));
-            }
-            
-            // Rule 6: Before or after a key on opposite hand: 3 (fine-tuning for 27)
-            if (prev != '\0' && isKey(prev) && isKey(ins) && keymap.at(prev).hand != keymap.at(ins).hand) {
-                candidates.push_back(3);
-            }
-            
-            // Rule 7: Before or after another key (using next character)
-            if (next != '\0' && isKey(next)) {
-                if (isKey(ins) && keymap.at(ins).hand == keymap.at(next).hand) {
-                    candidates.push_back(keyboardDistance(ins, next));
-                }
-                if (isKey(ins) && keymap.at(ins).hand != keymap.at(next).hand) {
-                    candidates.push_back(3);
-                }
+    void buildKeyboardPositions() {
+        vector<string> rows = {
+            "1234567890",
+            "qwertyuiop",
+            "asdfghjkl;",
+            "zxcvbnm,."
+        };
+        for (int r = 0; r < (int)rows.size(); ++r) {
+            for (int c = 0; c < (int)rows[r].size(); ++c) {
+                pos[rows[r][c]] = {r, c};
             }
         }
-        
-        // SPEC REQUIREMENT: For ambiguous cases, report MINIMUM cost
-        return candidates.empty() ? 6 : *min_element(candidates.begin(), candidates.end());
     }
-    
-    // STRICT SPEC COMPLIANT DELETION COST
-    int deletionCost(int i) const {
-        char del = target[i];
-        char prev = prevTargetChar(i);
-        
-        // Rule 1: Repeated character: 1
-        if (prev == del) return 1;
-        
-        // Rule 2: Space: 3
-        if (del == ' ') return 3;
-        
-        // Rule 3: Character after another key on same hand: 2
-        if (isKey(prev) && isKey(del) && keymap.at(prev).hand == keymap.at(del).hand) {
-            return 2;
+
+    int solve(int i, int j) {
+        if (seen[i][j]) return memo[i][j];
+        seen[i][j] = 1;
+
+        if (i == n && j == m) {
+            memo[i][j] = 0;
+            choice[i][j] = {END, 0, 0, 0};
+            return 0;
         }
-        
-        // Rule 4: Character after space or key on different hand: 6
-        return 6;
+
+        int best = INF;
+        Choice bestChoice{END, 0, 0, 0};
+
+        auto relax = [&](int cost, Choice candChoice) {
+            if (cost < best) {
+                best = cost;
+                bestChoice = candChoice;
+            }
+        };
+
+        if (i < n && j < m && target[i] == typo[j]) {
+            int tail = solve(i + 1, j + 1);
+            if (tail < INF) relax(tail, {MATCH, 1, 1, 0});
+        }
+
+        if (j < m) {
+            int c = insertionCost(i, j, typo[j]);
+            int tail = solve(i, j + 1);
+            if (tail < INF && c + tail < INF) relax(c + tail, {INSERT, 0, 1, 0});
+        }
+
+        if (i < n) {
+            int c = deletionCost(i, target[i]);
+            int tail = solve(i + 1, j);
+            if (tail < INF && c + tail < INF) relax(c + tail, {DELETE_OP, 1, 0, 0});
+        }
+
+        if (i < n && j < m && target[i] != typo[j]) {
+            int c = substitutionCost(target[i], typo[j]);
+            int tail = solve(i + 1, j + 1);
+            if (tail < INF && c + tail < INF) relax(c + tail, {SUBSTITUTE, 1, 1, 0});
+        }
+
+        if (i + 1 < n && j + 1 < m && target[i] == typo[j + 1] && target[i + 1] == typo[j]) {
+            int c = transposeCost(target[i], target[i + 1]);
+            int tail = solve(i + 2, j + 2);
+            if (tail < INF && c + tail < INF) relax(c + tail, {TRANSPOSE, 2, 2, 1});
+        }
+
+        if (i + 2 < n && j + 2 < m &&
+            target[i + 1] == typo[j] &&
+            target[i + 2] == typo[j + 1] &&
+            target[i]     == typo[j + 2]) {
+            int c1 = transposeCost(target[i], target[i + 1]);
+            int c2 = transposeCost(target[i], target[i + 2]);
+            int tail = solve(i + 3, j + 3);
+            if (tail < INF && c1 + c2 + tail < INF) {
+                relax(c1 + c2 + tail, {TRANSPOSE, 3, 3, 2});
+            }
+        }
+
+        memo[i][j] = best;
+        choice[i][j] = bestChoice;
+        return best;
     }
-    
-    // STRICT SPEC COMPLIANT SUBSTITUTION COST
-    int substitutionCost(char a, char b) const {
-        if (a == b) return 0;
-        
-        // Rule 1: Space for anything or anything for space: 6
-        if (isSpace(a) || isSpace(b)) return 6;
-        
-        const KeyInfo& ka = keymap.at(a);
-        const KeyInfo& kb = keymap.at(b);
-        
-        // Rule 2: Key for another on same hand: d(k1,k2)
-        if (ka.hand == kb.hand) {
-            return keyboardDistance(a, b);
+
+    vector<string> reconstruct() const {
+        vector<string> ops;
+        int i = 0, j = 0;
+        while (!(i == n && j == m)) {
+            const Choice& ch = choice[i][j];
+            switch (ch.kind) {
+                case MATCH:
+                    i += 1;
+                    j += 1;
+                    break;
+                case INSERT:
+                    ops.push_back(string("Insert ") + typo[j] + " before " + to_string(j));
+                    j += 1;
+                    break;
+                case DELETE_OP:
+                    ops.push_back("Delete " + to_string(j));
+                    i += 1;
+                    break;
+                case SUBSTITUTE:
+                    ops.push_back(string("Substitute ") + typo[j] + " at " + to_string(j));
+                    i += 1;
+                    j += 1;
+                    break;
+                case TRANSPOSE:
+                    if (ch.emitTransposeCount == 1) {
+                        ops.push_back("Transpose " + to_string(j) + "-" + to_string(j + 1));
+                    } else if (ch.emitTransposeCount == 2) {
+                        ops.push_back("Transpose " + to_string(j) + "-" + to_string(j + 1));
+                        ops.push_back("Transpose " + to_string(j + 1) + "-" + to_string(j + 2));
+                    } else {
+                        throw runtime_error("Invalid transpose reconstruction state");
+                    }
+                    i += ch.advanceI;
+                    j += ch.advanceJ;
+                    break;
+                case END:
+                    if (i == n && j == m) return ops;
+                    throw runtime_error("Missing reconstruction choice");
+            }
         }
-        
-        // Rule 3: Key for another on same finger, other hand: 1
-        if (ka.finger == kb.finger) {
-            return 1;
+        return ops;
+    }
+
+    int insertionCost(int i, int j, char inserted) const {
+        int best = INF;
+
+        if (i > 0) {
+            best = min(best, insertionNearNeighbor(target[i - 1], inserted));
         }
-        
-        // Rule 4: Key for another on different finger, other hand: 5
+        if (j > 0) {
+            best = min(best, insertionNearNeighbor(typo[j - 1], inserted));
+        }
+        if (i < n) {
+            best = min(best, insertionNearNeighbor(target[i], inserted));
+        }
+
+        return best == INF ? 6 : best;
+    }
+
+    int insertionNearNeighbor(char neighbor, char inserted) const {
+        if (inserted == neighbor) return 1;
+
+        if (inserted == ' ') {
+            if (isBottomRowKey(neighbor)) return 2;
+            return 6;
+        }
+
+        if (neighbor == ' ') return 6;
+
+        if (sameHand(inserted, neighbor)) return keyboardDistance(inserted, neighbor);
         return 5;
     }
-    
-    // STRICT SPEC COMPLIANT TRANSPOSITION COST
-    int transpositionCost(char a, char b) const {
-        // Rule 1: Space with anything else: 3
-        if (isSpace(a) || isSpace(b)) return 3;
-        
-        // Rule 2: Keys on different hands: 1
-        if (keymap.at(a).hand != keymap.at(b).hand) return 1;
-        
-        // Rule 3: Keys on same hand: 2
+
+    int deletionCost(int i, char deleted) const {
+        if (i == 0) return 6;
+        return deletionAgainstPrevNeighbor(deleted, target[i - 1]);
+    }
+
+    int deletionAgainstPrevNeighbor(char deleted, char prev) const {
+        if (deleted == prev) return 1;
+        if (deleted == ' ') return 3;
+        if (prev != ' ' && sameHand(deleted, prev)) return 2;
+        return 6;
+    }
+
+    int substitutionCost(char from, char to) const {
+        if (from == ' ' || to == ' ') return 6;
+        if (sameHand(from, to)) return keyboardDistance(from, to);
+        if (sameFingerOtherHand(from, to)) return 1;
+        return 5;
+    }
+
+    int transposeCost(char a, char b) const {
+        if (a == ' ' || b == ' ') return 3;
+        if (!sameHand(a, b)) return 1;
         return 2;
     }
-    
-    int solveDamerauLevenshtein() {
-        vector<vector<int>> d(n + 2, vector<int>(m + 2, INF));
-        
-        unordered_map<char, int> DA;
-        for (char c = 'a'; c <= 'z'; c++) DA[c] = 0;
-        for (char c = 'A'; c <= 'Z'; c++) DA[c] = 0;
-        DA[' '] = 0;
-        for (char c = '0'; c <= '9'; c++) DA[c] = 0;
-        for (char c : string(",.;")) DA[c] = 0;
-        
-        d[0][0] = INF;
-        for (int i = 0; i <= n; i++) {
-            d[i + 1][0] = INF;
-            d[i + 1][1] = 0;
-            for (int k = 0; k < i; k++) d[i + 1][1] += deletionCost(k);
-        }
-        for (int j = 0; j <= m; j++) {
-            d[0][j + 1] = INF;
-            d[1][j + 1] = 0;
-            for (int k = 0; k < j; k++) d[1][j + 1] += insertionCost(0, k);
-        }
-        
-        for (int i = 1; i <= n; i++) {
-            int DB = 0;
-            
-            for (int j = 1; j <= m; j++) {
-                int i1 = DA.count(typo[j - 1]) ? DA[typo[j - 1]] : 0;
-                int j1 = DB;
-                
-                bool match = (target[i - 1] == typo[j - 1]);
-                int subCost = match ? 0 : substitutionCost(target[i - 1], typo[j - 1]);
-                
-                if (match) DB = j;
-                
-                int c1 = d[i][j] + subCost;
-                int c2 = d[i][j + 1] + deletionCost(i - 1);
-                int c3 = d[i + 1][j] + insertionCost(i - 1, j - 1);
-                
-                int c4 = INF;
-                int delBetween = 0;
-                int insBetween = 0;
-                int tCost = 0;
-                if (i1 > 0 && j1 > 0 && target[i1 - 1] == typo[j - 1] &&
-                    target[i - 1] == typo[j1 - 1]) {
-                    for (int k = i1; k < i - 1; k++) delBetween += deletionCost(k);
-                    for (int k = j1; k < j - 1; k++) insBetween += insertionCost(i1 - 1, k);
-                    tCost = transpositionCost(target[i1 - 1], target[i - 1]);
-                    c4 = d[i1][j1] + delBetween + tCost + insBetween;
-                }
-                
-                                
-                int best = min({c1, c2, c3, c4});
-                d[i + 1][j + 1] = best;
-            }
-            
-            DA[target[i - 1]] = i;
-        }
-        
-        return d[n + 1][m + 1];
+
+    int keyboardDistance(char a, char b) const {
+        auto ita = pos.find(a), itb = pos.find(b);
+        if (ita == pos.end() || itb == pos.end()) return 5;
+        return max(abs(ita->second.first - itb->second.first), abs(ita->second.second - itb->second.second));
+    }
+
+    bool isBottomRowKey(char c) const {
+        auto it = pos.find(c);
+        return it != pos.end() && it->second.first == 3;
+    }
+
+    bool sameHand(char a, char b) const {
+        auto ha = handOf(a), hb = handOf(b);
+        return ha != -1 && hb != -1 && ha == hb;
+    }
+
+    bool sameFingerOtherHand(char a, char b) const {
+        int ha = handOf(a), hb = handOf(b);
+        if (ha == -1 || hb == -1 || ha == hb) return false;
+        int fa = fingerGroup(a), fb = fingerGroup(b);
+        return fa != -1 && fa == fb;
+    }
+
+    int handOf(char c) const {
+        if (c == ' ') return -1;
+        auto it = pos.find(c);
+        if (it == pos.end()) return -1;
+        return (it->second.second <= 4) ? 0 : 1;
+    }
+
+    int fingerGroup(char c) const {
+        if (c == ' ') return -1;
+        auto it = pos.find(c);
+        if (it == pos.end()) return -1;
+        int col = it->second.second;
+        return min(col, 9 - col);
     }
 };
 
-static vector<pair<string, string>> readInputFile(const string& filename) {
-    ifstream fin(filename);
+static vector<pair<string,string>> readInput(const string& path) {
+    ifstream fin(path);
     if (!fin) throw runtime_error("Could not open input.txt");
-    
+
+    vector<string> lines;
     string line;
-    getline(fin, line);
-    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-    int cases = stoi(line);
-    
-    vector<pair<string, string>> tests;
-    tests.reserve(cases);
-    
-    for (int tc = 0; tc < cases; tc++) {
-        string target, typo;
-        while (getline(fin, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (!line.empty()) { target = line; break; }
-        }
-        if (!getline(fin, typo)) throw runtime_error("Missing typo string in input.");
-        if (!typo.empty() && typo.back() == '\r') typo.pop_back();
+    while (getline(fin, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
+
+    if (lines.empty()) throw runtime_error("input.txt is empty");
+
+    int idx = 0;
+    while (idx < (int)lines.size() && lines[idx].empty()) ++idx;
+    if (idx >= (int)lines.size()) throw runtime_error("Missing test count in input.txt");
+
+    int t = stoi(lines[idx++]);
+    vector<pair<string,string>> tests;
+    tests.reserve(t);
+
+    for (int caseNo = 0; caseNo < t; ++caseNo) {
+        while (idx < (int)lines.size() && lines[idx].empty()) ++idx;
+        if (idx >= (int)lines.size()) throw runtime_error("Missing target string for case " + to_string(caseNo + 1));
+        string target = lines[idx++];
+        if (idx >= (int)lines.size()) throw runtime_error("Missing typo string for case " + to_string(caseNo + 1));
+        string typo = lines[idx++];
         tests.push_back({target, typo});
     }
+
     return tests;
 }
 
-static void writeOutputFile(
-    const string& filename,
-    const vector<pair<int, vector<string>>>& results
-) {
-    ofstream fout(filename);
+static void writeOutput(const string& path, const vector<pair<int, vector<string>>>& results) {
+    ofstream fout(path);
     if (!fout) throw runtime_error("Could not open output.txt");
-    
-    for (size_t t = 0; t < results.size(); t++) {
-        fout << results[t].first << "\n";
-        for (const string& op : results[t].second) fout << op << "\n";
-        if (t + 1 < results.size()) fout << "\n";
+
+    for (size_t i = 0; i < results.size(); ++i) {
+        fout << results[i].first << "\n";
+        for (const string& op : results[i].second) fout << op << "\n";
+        if (i + 1 < results.size()) fout << "\n";
     }
 }
 
 int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-    
+
     try {
-        vector<pair<string, string>> tests = readInputFile("input.txt");
+        vector<pair<string,string>> tests = readInput("input.txt");
         vector<pair<int, vector<string>>> results;
         results.reserve(tests.size());
-        
-        for (const auto& test : tests) {
-            TypoSolver solver(test.first, test.second);
+
+        for (const auto& tc : tests) {
+            TypoSolver solver(tc.first, tc.second);
             results.push_back(solver.solveAll());
         }
-        
-        writeOutputFile("output.txt", results);
+
+        writeOutput("output.txt", results);
     } catch (const exception& e) {
-        cerr << e.what() << "\n";
+        cerr << e.what() << '\n';
         return 1;
     }
-    
+
     return 0;
 }
